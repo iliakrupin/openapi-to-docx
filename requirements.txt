@@ -1,0 +1,7 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.30.0
+requests>=2.31.0
+python-multipart>=0.0.9
+pydantic>=2.5.0
+python-dotenv>=1.0.1
+python-docx>=0.8.11

@@ -1,0 +1,329 @@
+---
+description: FastAPI best practices based on official FastAPI documentation (fastapi.tiangolo.com) and Python web API patterns
+globs: **/*.py, app/**/*.py, api/**/*.py
+---
+
+# FastAPI Best Practices
+
+Based on: [FastAPI Official Documentation](https://fastapi.tiangolo.com/), [FastAPI Tutorial](https://fastapi.tiangolo.com/tutorial/)
+
+## Project Structure
+
+### Application Organization
+- **Single file for small apps**: Keep simple apps in one file (main.py)
+- **Package structure for larger apps**: Use `app/` or `src/` directory
+- **Separate routers**: Create separate router files for different domains
+- **Configuration management**: Use environment variables with `python-dotenv`
+- **Dependency injection**: Leverage FastAPI's dependency injection system
+
+### File Organization Pattern
+```
+project/
+├── src/
+│   ├── main.py          # FastAPI app instance
+│   ├── routers/         # API route handlers
+│   ├── models/          # Pydantic models
+│   ├── schemas/         # Request/response schemas
+│   └── dependencies.py  # Shared dependencies
+├── requirements.txt
+└── .env
+```
+
+## API Design
+
+### HTTP Methods (per REST standards)
+- **GET**: Retrieve resources (idempotent, safe)
+- **POST**: Create resources or perform actions
+- **PUT**: Replace entire resource (idempotent)
+- **PATCH**: Partial update (idempotent)
+- **DELETE**: Remove resources (idempotent)
+- Use appropriate methods for operations
+
+### Status Codes (per HTTP spec)
+- **200 OK**: Successful GET, PUT, PATCH
+- **201 Created**: Successful POST (resource created)
+- **204 No Content**: Successful DELETE
+- **400 Bad Request**: Invalid request data
+- **401 Unauthorized**: Authentication required
+- **403 Forbidden**: Authorization failed
+- **404 Not Found**: Resource not found
+- **422 Unprocessable Entity**: Validation error (FastAPI default)
+- **500 Internal Server Error**: Server error
+
+### Request/Response Models
+- Use Pydantic models for request/response validation
+- Define models in `schemas/` or `models/` directory
+- Use type hints for all parameters and return types
+- Leverage Pydantic's validation features
+
+## Route Handlers
+
+### Function Signatures
+```python
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import StreamingResponse
+
+@app.post("/endpoint")
+async def endpoint_handler(
+    file: UploadFile = File(...),
+    param: str = None
+) -> StreamingResponse:
+    """Route handler with proper typing."""
+    # Implementation
+```
+
+### Async vs Sync
+- **Use async**: For I/O-bound operations (file uploads, API calls, DB queries)
+- **Use sync**: For CPU-bound operations (if needed, use background tasks)
+- **Default to async**: FastAPI handles async efficiently
+
+### File Uploads
+- Use `UploadFile` for file uploads (per FastAPI docs)
+- Validate file types: Check `file.content_type` or `file.filename`
+- Use `File(...)` for required files, `File(None)` for optional
+- Stream large files: Use `StreamingResponse` for downloads
+
+### Error Handling
+```python
+from fastapi import HTTPException
+
+# Raise HTTPException with appropriate status code
+if not file.filename.endswith(".json"):
+    raise HTTPException(
+        status_code=400,
+        detail="Only JSON files are supported"
+    )
+
+# Handle exceptions gracefully
+try:
+    result = process_file(file)
+except ValueError as e:
+    raise HTTPException(status_code=400, detail=str(e))
+except Exception as e:
+    logger.error(f"Error: {e}")
+    raise HTTPException(status_code=500, detail="Internal server error")
+```
+
+## Pydantic Models
+
+### Model Definition
+```python
+from pydantic import BaseModel, Field
+from typing import Optional
+
+class RequestModel(BaseModel):
+    field: str = Field(..., description="Field description")
+    optional_field: Optional[int] = Field(None, description="Optional field")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "field": "value",
+                "optional_field": 123
+            }
+        }
+```
+
+### Validation
+- Use Pydantic validators for complex validation
+- Leverage Field() for constraints (min_length, max_length, regex)
+- Use Enum for restricted values
+- Provide clear error messages
+
+### Response Models
+- Define response models explicitly
+- Use `response_model` parameter in route decorator
+- Support multiple response models with `responses` parameter
+
+## Dependency Injection
+
+### Function Dependencies
+```python
+from fastapi import Depends
+
+def get_config():
+    return {"key": "value"}
+
+@app.get("/endpoint")
+async def endpoint(config: dict = Depends(get_config)):
+    return config
+```
+
+### Class Dependencies
+```python
+class Database:
+    def __init__(self):
+        self.connection = None
+
+def get_db():
+    db = Database()
+    try:
+        yield db
+    finally:
+        db.connection.close()
+
+@app.get("/endpoint")
+async def endpoint(db: Database = Depends(get_db)):
+    return db.query()
+```
+
+### Shared Dependencies
+- Create `dependencies.py` for shared dependencies
+- Reuse dependencies across routes
+- Use dependency chains for complex scenarios
+
+## Configuration Management
+
+### Environment Variables
+```python
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Required variables should raise error if missing
+API_URL = os.getenv("API_URL")
+if not API_URL:
+    raise ValueError("API_URL environment variable is required")
+
+# Optional variables with defaults
+MAX_SIZE = int(os.getenv("MAX_SIZE", "1000"))
+```
+
+### Settings Class (Pydantic Settings)
+```python
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    api_url: str
+    max_size: int = 1000
+    
+    class Config:
+        env_file = ".env"
+
+settings = Settings()
+```
+
+## Security
+
+### CORS
+```python
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure appropriately
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+### Input Validation
+- Always validate file types and sizes
+- Sanitize user input
+- Use Pydantic models for automatic validation
+- Validate file extensions before processing
+
+### Security Headers
+- Use middleware for security headers
+- Set appropriate Content-Type headers
+- Use secure file handling
+
+## Logging
+
+### Configuration
+```python
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+```
+
+### Usage
+- Log errors with full context
+- Use appropriate log levels (DEBUG, INFO, WARNING, ERROR)
+- Log request/response for debugging (be careful with sensitive data)
+- Use structured logging when possible
+
+## Response Types
+
+### StreamingResponse
+```python
+from fastapi.responses import StreamingResponse
+import io
+
+@app.post("/generate")
+async def generate() -> StreamingResponse:
+    content = generate_content()
+    output_stream = io.BytesIO(content)
+    return StreamingResponse(
+        output_stream,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": "attachment; filename=file.docx"}
+    )
+```
+
+### File Responses
+- Use `StreamingResponse` for file downloads
+- Set appropriate `media_type`
+- Include `Content-Disposition` header for downloads
+- Use `BytesIO` for in-memory files
+
+## Testing
+
+### Test Client
+```python
+from fastapi.testclient import TestClient
+
+client = TestClient(app)
+
+def test_endpoint():
+    response = client.post("/endpoint", files={"file": ("test.json", b"{}")})
+    assert response.status_code == 200
+```
+
+### Test Patterns
+- Test success cases
+- Test error cases (400, 401, 404, 500)
+- Test validation errors
+- Test file uploads
+- Use fixtures for common setup
+
+## Deployment
+
+### Uvicorn Configuration
+```python
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True  # Development only
+    )
+```
+
+### Production
+- Use Gunicorn with Uvicorn workers for production
+- Set appropriate worker count
+- Configure logging
+- Use environment variables for configuration
+- Set up proper error monitoring
+
+## Documentation
+
+### OpenAPI Integration
+- FastAPI auto-generates OpenAPI schema
+- Customize with `openapi_tags`, `openapi_url`
+- Add descriptions to routes and models
+- Use `response_description` parameter
+
+### Docstrings
+- Use docstrings for route descriptions
+- Document parameters and return types
+- Include examples in docstrings
+- Keep docstrings up to date

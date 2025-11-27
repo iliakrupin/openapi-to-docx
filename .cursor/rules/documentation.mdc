@@ -1,0 +1,193 @@
+---
+description: Best practices for API documentation generation based on Google Cloud API Design Guide, Microsoft REST API Guidelines, and OpenAPI documentation standards
+globs: **/*.py, template/**/*.md
+---
+
+# API Documentation Generation Best Practices
+
+Based on: [Google Cloud API Design Guide](https://cloud.google.com/apis/design), [Microsoft REST API Guidelines](https://github.com/microsoft/api-guidelines), [OpenAPI Documentation](https://swagger.io/specification/)
+
+## Documentation Structure
+
+### Organization Principles (Google Cloud API Design Guide)
+- **Group by resource/domain**: Organize endpoints by business domain or resource type
+- **Use tags**: Leverage OpenAPI tags for logical grouping
+- **Hierarchical structure**: Use clear heading hierarchy (H1 → H2 → H3)
+- **Consistent numbering**: Number sections consistently (1, 1.1, 1.2, etc.)
+- **Separators**: Use visual separators between major sections
+
+### Required Sections (per API documentation standards)
+1. **Description**: What the endpoint does
+2. **Interface Requirements**: Technical requirements (sync/async, format, auth)
+3. **Request Format**: HTTP method, URL, headers
+4. **Request Parameters**: All parameters (path, query, header, body)
+5. **Response Format**: Response schema and fields
+6. **Request Example**: Complete request example (JSON)
+7. **Response Example**: Complete response example (JSON)
+8. **Error Examples**: Common error scenarios
+
+## Markdown Best Practices
+
+### Text Formatting
+- **Sanitize user input**: Remove unwanted Markdown formatting from OpenAPI descriptions
+- **Preserve structure**: Keep code blocks, tables, lists intact
+- **Consistent spacing**: Normalize whitespace (single spaces, proper line breaks)
+- **Escape special characters**: Escape `*`, `_`, `[`, `]` in code contexts
+
+### Tables (per Markdown spec)
+- Use pipe-separated format: `| Header | Header |`
+- Include separator row: `|------|------|`
+- Align columns consistently
+- Handle empty cells gracefully
+- Support multi-line cell content
+
+### Code Blocks
+- Use fenced code blocks with language identifier: ` ```json `
+- Format JSON with 2-space indentation (per JSON spec)
+- Preserve code block boundaries
+- Escape code block delimiters in content
+
+### Lists
+- Use consistent list markers (`-` for unordered)
+- Support nested lists with proper indentation
+- Parse structured content (Parameters, Returns, Raises)
+- Handle multi-line list items
+
+## DOCX Conversion Best Practices
+
+### Document Structure (Microsoft Word standards)
+- **Heading styles**: Use Word's built-in heading styles (Heading 1, 2, 3)
+- **Paragraph spacing**: Consistent spacing before/after paragraphs
+- **Page breaks**: Use section breaks for major sections if needed
+- **Table of contents**: Consider auto-generated TOC for long documents
+
+### Code Block Formatting
+- **Monospace font**: Courier New or Consolas (10pt recommended)
+- **Background shading**: Light gray (#F5F5F5) for readability
+- **Indentation**: Left/right indentation (12pt recommended)
+- **Spacing**: Adequate spacing before/after code blocks
+- **Preserve formatting**: Maintain indentation and line breaks
+
+### Table Formatting
+- **Borders**: Apply borders for data tables, remove for parameter lists
+- **Cell padding**: Adequate padding for readability
+- **Alignment**: Left-align text, center-align headers if appropriate
+- **Width**: Auto-fit or specify column widths
+- **Header row**: Bold and distinct from data rows
+
+### List Formatting
+- **Word numbering**: Use Word's built-in list formatting (not manual bullets)
+- **Indentation**: Consistent indentation levels
+- **Spacing**: Minimal spacing between list items
+- **Nested lists**: Proper indentation for nested items
+
+## Content Quality Standards
+
+### Descriptions (per Google Cloud API Design Guide)
+- **Clear and concise**: One sentence summary, detailed description below
+- **Action-oriented**: Use active voice ("Creates a user" not "User is created")
+- **Complete**: Include all necessary information
+- **Examples**: Provide realistic examples
+- **Error handling**: Document error scenarios
+
+### Parameter Documentation
+- **Name**: Exact parameter name
+- **Location**: Where parameter appears (path, query, header, body)
+- **Type**: Data type (string, integer, object, etc.)
+- **Description**: What the parameter does
+- **Required**: Whether parameter is mandatory
+- **Default**: Default value if applicable
+- **Constraints**: Min/max, pattern, enum values
+
+### Response Documentation
+- **Status codes**: Document all possible status codes
+- **Schema**: Complete response schema
+- **Fields**: All fields with types and descriptions
+- **Examples**: Realistic example responses
+- **Error responses**: Document error response format
+
+## Localization (Internationalization)
+
+### Language Support
+- **Primary language**: Support primary language (Russian in this case)
+- **Terminology**: Consistent translation of technical terms
+- **Mixed content**: Handle mixed-language content gracefully
+- **Preserve originals**: Keep original text when translation not needed
+
+### Common Translations
+- Parameters → Параметры
+- Returns → Возвращает
+- Raises → Вызывает
+- Description → Описание
+- Example → Пример
+
+## Error Handling
+
+### Documentation Errors
+- **Missing descriptions**: Provide fallback descriptions
+- **Missing examples**: Generate examples from schemas
+- **Malformed Markdown**: Handle gracefully, preserve what's possible
+- **Invalid DOCX**: Validate structure before saving
+
+### User-Friendly Messages
+- Clear error messages for invalid OpenAPI specs
+- Helpful messages for missing required fields
+- Warnings for deprecated features
+- Suggestions for common issues
+
+## Performance Optimization
+
+### Large Documents
+- **Streaming**: Stream large documents when possible
+- **Memory efficiency**: Use BytesIO for in-memory generation
+- **Batch operations**: Minimize document operations
+- **Caching**: Cache style definitions and resolved schemas
+
+### Processing
+- **Lazy evaluation**: Process only what's needed
+- **Generator patterns**: Use generators for large lists
+- **Efficient parsing**: Optimize Markdown parsing
+- **Table optimization**: Efficient table creation for large tables
+
+## File Handling
+
+### Filename Generation
+- **Safe filenames**: Remove special characters, sanitize input
+- **Timestamps**: Include timestamps for uniqueness
+- **Extensions**: Use proper file extensions (.docx, .md)
+- **Encoding**: UTF-8 for all text content
+
+### HTTP Response Headers
+- **Content-Type**: `application/vnd.openxmlformats-officedocument.wordprocessingml.document` for DOCX
+- **Content-Disposition**: `attachment; filename="..."` for downloads
+- **Encoding**: UTF-8 encoding
+- **Cache-Control**: Appropriate caching headers
+
+## Quality Assurance
+
+### Validation
+- **Markdown syntax**: Validate generated Markdown
+- **DOCX structure**: Validate DOCX XML structure
+- **Encoding**: Verify UTF-8 encoding
+- **Table structure**: Verify table formatting
+- **Code blocks**: Verify code block formatting
+
+### Testing
+- **Word compatibility**: Test DOCX in Microsoft Word
+- **LibreOffice compatibility**: Test in LibreOffice Writer
+- **Markdown renderers**: Test Markdown in common renderers
+- **Cross-platform**: Test on different operating systems
+
+## Template Adherence
+
+### Template Structure
+- Follow template structure exactly (`template/api_template.md`)
+- Include all required sections
+- Maintain consistent formatting
+- Preserve template conventions
+
+### Customization
+- Support template variables/placeholders
+- Allow template overrides
+- Document template format
+- Validate template structure

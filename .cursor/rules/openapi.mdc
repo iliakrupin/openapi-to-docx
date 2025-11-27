@@ -1,0 +1,214 @@
+---
+description: Best practices for working with OpenAPI 3.0+ specifications based on official OpenAPI Specification (github.com/OAI/OpenAPI-Specification) and Swagger.io guidelines
+globs: **/*.py, openapi/**/*.json
+---
+
+# OpenAPI 3.0+ Processing Best Practices
+
+Based on: [OpenAPI Specification](https://github.com/OAI/OpenAPI-Specification), [Swagger.io Documentation](https://swagger.io/specification/)
+
+## Specification Structure (OpenAPI 3.0+)
+
+### Required Fields Validation
+- **openapi**: Must be present and version 3.0.0 or higher (per OpenAPI 3.0 spec section 3.0.0)
+- **info**: Required object with `title` and `version` fields (section 3.1.0)
+- **paths**: Required object containing API endpoints (section 3.0.0)
+- Validate structure before processing to avoid runtime errors
+
+### Path Item Object Processing
+- Each path must start with `/` (section 3.1.0 Paths Object)
+- Support path parameters: `{paramName}` format (section 3.0.3 Path Templating)
+- Process all HTTP methods: get, post, put, delete, patch, head, options, trace (section 3.1.0)
+- Handle path-level parameters that apply to all operations (section 3.1.0)
+
+### Operation Object
+- **operationId**: Should be unique across all operations (section 3.0.3)
+- **tags**: Group operations for documentation (section 3.1.0)
+- **summary**: Brief description (section 3.1.0)
+- **description**: Detailed description (section 3.1.0)
+- **parameters**: Array of parameter objects (section 3.1.0)
+- **requestBody**: Request body schema (section 3.1.0)
+- **responses**: Required object with at least one response (section 3.1.0)
+
+## Schema Resolution ($ref)
+
+Per OpenAPI 3.0 spec section 3.0.3 (Schema Object) and JSON Schema Reference:
+
+### Reference Resolution
+- **Local references**: `#/components/schemas/User` - resolve from `components.schemas.User`
+- **External references**: `./schemas.json#/User` - resolve from external file
+- **Recursive resolution**: Handle nested `$ref` in resolved schemas
+- **Circular references**: Detect and handle circular dependencies gracefully
+- Always resolve before accessing schema properties
+
+### Components Object (section 3.0.3)
+- **schemas**: Reusable schema definitions
+- **responses**: Reusable response definitions
+- **parameters**: Reusable parameter definitions
+- **examples**: Reusable example objects
+- **requestBodies**: Reusable request body definitions
+- **headers**: Reusable header definitions
+- **securitySchemes**: Security scheme definitions
+- **links**: Link objects
+- **callbacks**: Callback definitions
+
+## Parameter Object (section 3.1.0)
+
+### Parameter Locations
+- **path**: Path parameters (required: true)
+- **query**: Query string parameters
+- **header**: Header parameters
+- **cookie**: Cookie parameters
+- **body**: Deprecated in OpenAPI 3.0, use `requestBody` instead
+
+### Parameter Schema
+- Use `schema` field for parameter type definition
+- Support `content` field for complex parameter types (OpenAPI 3.0)
+- Handle `required` boolean (default: false, except path parameters)
+- Support `style` and `explode` for serialization (section 3.2.8)
+
+## Request Body Object (section 3.1.0)
+
+- **required**: Boolean, default false
+- **content**: Map of media types to Media Type Objects
+- **description**: Optional description
+- Extract schema from `content[mediaType].schema`
+- Support multiple content types (application/json, application/xml, etc.)
+
+## Response Object (section 3.1.0)
+
+### Status Codes
+- **200**: OK - standard success response
+- **201**: Created - resource created
+- **202**: Accepted - async processing
+- **204**: No Content - success with no body
+- **400**: Bad Request - client error
+- **401**: Unauthorized - authentication required
+- **403**: Forbidden - authorization failed
+- **404**: Not Found - resource not found
+- **500**: Internal Server Error - server error
+- Support default response: `default` key
+
+### Response Schema Extraction
+- Extract from `content[mediaType].schema`
+- Support `example` field (single example)
+- Support `examples` field (multiple named examples)
+- Handle `headers` object for response headers
+
+## Security Schemes (section 3.0.3)
+
+### Security Scheme Types
+- **apiKey**: API key authentication
+- **http**: HTTP authentication (Basic, Bearer, Digest)
+- **oauth2**: OAuth 2.0
+- **openIdConnect**: OpenID Connect Discovery
+
+### Security Requirements
+- Operation-level: `operation.security`
+- Global-level: `openapi_spec.security`
+- Operation-level overrides global-level
+- Support multiple security schemes (AND logic)
+- Support empty array `[]` for no security
+
+## Code Patterns
+
+### Schema Resolution (per JSON Schema spec)
+```python
+def resolve_schema(schema: Dict[str, Any], openapi_spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Resolve $ref references per OpenAPI 3.0 spec section 3.0.3.
+    Handles local references (#/components/schemas/User).
+    """
+    if not schema or "$ref" not in schema:
+        return schema
+    
+    ref = schema["$ref"]
+    if not ref.startswith("#/"):
+        # External reference - handle separately
+        return schema
+    
+    parts = ref.lstrip("#/").split("/")
+    resolved = openapi_spec
+    for part in parts:
+        if not isinstance(resolved, dict):
+            return schema
+        resolved = resolved.get(part)
+        if resolved is None:
+            return schema
+    
+    # Recursively resolve nested refs
+    return resolve_schema(resolved, openapi_spec)
+```
+
+### Operation Grouping (per OpenAPI tags)
+```python
+def group_operations_by_tag(openapi_spec: Dict[str, Any]) -> Dict[str, List[Dict]]:
+    """
+    Group operations by tags per OpenAPI 3.0 spec section 3.1.0.
+    Operations without tags should use default tag.
+    """
+    grouped: Dict[str, List[Dict]] = {}
+    default_tag = "API"
+    
+    for path, path_item in openapi_spec.get("paths", {}).items():
+        for method, operation in path_item.items():
+            if method.lower() not in ["get", "post", "put", "delete", "patch", "head", "options", "trace"]:
+                continue
+            
+            tags = operation.get("tags") or [default_tag]
+            for tag in tags:
+                grouped.setdefault(tag, []).append({
+                    "path": path,
+                    "method": method.upper(),
+                    "operation": operation
+                })
+    
+    return grouped
+```
+
+## Type System (per JSON Schema and OpenAPI 3.0)
+
+### Primitive Types
+- **string**: Text data (support format: date, date-time, email, uri, etc.)
+- **integer**: Integer numbers (support format: int32, int64)
+- **number**: Floating point numbers (support format: float, double)
+- **boolean**: true/false
+- **array**: Ordered list of items
+- **object**: Key-value pairs
+
+### Schema Composition (section 3.0.3)
+- **allOf**: All schemas must be valid
+- **oneOf**: Exactly one schema must be valid
+- **anyOf**: One or more schemas must be valid
+- **not**: Schema must not be valid
+
+### Additional Schema Properties
+- **enum**: Array of allowed values
+- **nullable**: true if value can be null (OpenAPI 3.0)
+- **default**: Default value
+- **example**: Example value (deprecated, use examples)
+- **examples**: Map of named examples
+
+## Error Handling
+
+- Validate JSON structure before parsing (catch JSONDecodeError)
+- Validate OpenAPI version field exists and is 3.0+
+- Provide clear error messages referencing OpenAPI spec sections
+- Handle missing optional fields with sensible defaults
+- Log warnings for deprecated features (e.g., `example` vs `examples`)
+
+## Performance Considerations
+
+- Cache resolved schemas to avoid redundant $ref resolution
+- Use generators for large endpoint lists
+- Process large specs in chunks if token/context limits exist
+- Lazy evaluation for optional fields
+- Stream processing for very large files
+
+## Extension Support (x-* fields)
+
+Per OpenAPI 3.0 spec section 3.0.3, custom extensions are allowed:
+- Support `x-*` fields for custom metadata
+- Preserve extensions in output when possible
+- Document supported extensions (e.g., `x-interface-mode`)
+- Don't break on unknown extensions
