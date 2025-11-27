@@ -1,6 +1,6 @@
 # Continue ignore file - excludes files from context
 # Large OpenAPI files (will be loaded only when explicitly requested)
-openapi/*.json
+openapi_files/*.json
 
 # Python cache
 __pycache__/

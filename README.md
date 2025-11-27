@@ -27,7 +27,7 @@ POST /generate-doc
 
 ### Response
 
-The endpoint returns a DOCX file generated from the template `template/api_template.md`.
+The endpoint returns a DOCX file generated from the template `template_files/api_template.md`.
 The file is sent as an attachment (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`),
 so it needs to be saved to disk (see example below).
 
@@ -73,7 +73,7 @@ The service supports two generation modes:
 
 1. **Parsing** the OpenAPI spec to extract endpoints, methods, parameters, and schemas
 2. **Grouping** operations by tags for organized documentation
-3. **Generating** Markdown content following the template structure (`template/api_template.md`)
+3. **Generating** Markdown content following the template structure (`template_files/api_template.md`)
 4. **Converting** Markdown to DOCX format using python-docx library
 5. **Returning** the DOCX file as a downloadable attachment
 

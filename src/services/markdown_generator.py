@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 def generate_markdown_from_openapi(openapi_spec: Dict[str, Any], use_llm: bool = False, use_llm_enhance: Optional[bool] = None, max_endpoints: Optional[int] = None) -> str:
     """
-    Сформировать Markdown-документ в соответствии с шаблоном template/api_template.md.
+    Сформировать Markdown-документ в соответствии с шаблоном template_files/api_template.md.
     
     Two modes available:
     1. Fast mode (use_llm_enhance=false): Local parsing only, very fast

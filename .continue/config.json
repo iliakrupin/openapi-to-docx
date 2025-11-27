@@ -1,14 +1,6 @@
 {
   "rules": [
     ".cursor/rules/*.mdc"
-  ],
-  "allowAnonymousTelemetry": false,
-  "embeddingsProvider": {
-    "provider": "openai"
-  },
-  "disableIndexing": false,
-  "maxFileSize": 500000,
-  "chunkOverlap": 100,
-  "chunkSize": 500
+  ]
 }
 
