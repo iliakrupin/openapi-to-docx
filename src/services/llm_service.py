@@ -8,159 +8,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from src.config import LM_STUDIO_API_URL, HEADERS, MODEL_NAME, MAX_TOKENS, CHUNK_SIZE
+from src.config import LM_STUDIO_API_URL, HEADERS, MODEL_NAME, MAX_TOKENS
 
 logger = logging.getLogger(__name__)
 
 # Cache for enhanced descriptions to avoid redundant API calls
 _description_cache: Dict[str, str] = {}
-
-
-def generate_documentation_with_llm(openapi_spec: Dict[str, Any]) -> str:
-    """
-    Generate Markdown documentation using LLM via LM Studio API.
-    
-    Args:
-        openapi_spec: OpenAPI 3.0+ specification dictionary
-        
-    Returns:
-        Generated Markdown documentation string
-        
-    Raises:
-        ValueError: If API call fails or returns invalid response
-        requests.RequestException: If HTTP request fails
-    """
-    try:
-        # Prepare prompt for LLM
-        prompt = build_llm_prompt(openapi_spec)
-        
-        # Check if we need to chunk the spec
-        spec_json = json.dumps(openapi_spec, ensure_ascii=False)
-        if len(spec_json) > CHUNK_SIZE:
-            logger.info(f"OpenAPI spec is large ({len(spec_json)} chars), processing in chunks")
-            return generate_with_chunking(openapi_spec, prompt)
-        else:
-            return generate_single_request(prompt)
-            
-    except requests.RequestException as e:
-        logger.error(f"HTTP error calling LM Studio API: {str(e)}", exc_info=True)
-        raise ValueError(f"Failed to call LM Studio API: {str(e)}")
-    except Exception as e:
-        logger.error(f"Error generating documentation with LLM: {str(e)}", exc_info=True)
-        raise ValueError(f"LLM generation failed: {str(e)}")
-
-
-def build_llm_prompt(openapi_spec: Dict[str, Any]) -> str:
-    """
-    Build prompt for LLM to generate documentation.
-    
-    Args:
-        openapi_spec: OpenAPI specification
-        
-    Returns:
-        Formatted prompt string
-    """
-    spec_json = json.dumps(openapi_spec, ensure_ascii=False, indent=2)
-    
-    prompt = f"""Сгенерируй подробную API-документацию в формате Markdown на основе следующей OpenAPI спецификации.
-
-Требования к документации:
-1. Используй шаблон из template_files/api_template.md
-2. Для каждого эндпоинта создай раздел с описанием, параметрами, примерами запросов и ответов
-3. Группируй эндпоинты по тегам (tags)
-4. Используй русский язык для описаний
-5. Включи все детали из спецификации: параметры, схемы, примеры, аутентификацию
-
-OpenAPI спецификация:
-{spec_json}
-
-Сгенерируй полную документацию в формате Markdown:"""
-    
-    return prompt
-
-
-def generate_single_request(prompt: str) -> str:
-    """
-    Generate documentation with single API call.
-    
-    Args:
-        prompt: LLM prompt
-        
-    Returns:
-        Generated Markdown documentation
-    """
-    url = f"{LM_STUDIO_API_URL}/chat/completions"
-    
-    payload = {
-        "model": MODEL_NAME,
-        "messages": [
-            {
-                "role": "system",
-                "content": "Ты эксперт по созданию API-документации. Генерируй подробную, структурированную документацию в формате Markdown."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        "max_tokens": MAX_TOKENS,
-        "temperature": 0.3
-    }
-    
-    logger.info(f"Calling LM Studio API: {url}")
-    response = requests.post(url, json=payload, headers=HEADERS, timeout=300)
-    response.raise_for_status()
-    
-    result = response.json()
-    
-    # Extract content from response
-    if "choices" in result and len(result["choices"]) > 0:
-        content = result["choices"][0].get("message", {}).get("content", "")
-        if not content:
-            raise ValueError("Empty response from LLM")
-        return content
-    else:
-        raise ValueError(f"Unexpected response format: {result}")
-
-
-def generate_with_chunking(openapi_spec: Dict[str, Any], prompt: str) -> str:
-    """
-    Generate documentation by processing spec in chunks.
-    
-    Args:
-        openapi_spec: OpenAPI specification
-        prompt: Base prompt
-        
-    Returns:
-        Combined Markdown documentation
-    """
-    # For now, use single request but with reduced context
-    # TODO: Implement proper chunking strategy
-    logger.warning("Chunking not fully implemented, using single request with reduced context")
-    
-    # Extract paths to process separately
-    paths = openapi_spec.get("paths", {})
-    chunks = []
-    
-    for path, path_item in list(paths.items())[:10]:  # Limit for now
-        chunk_spec = {
-            "openapi": openapi_spec.get("openapi", "3.0.0"),
-            "info": openapi_spec.get("info", {}),
-            "paths": {path: path_item}
-        }
-        chunk_prompt = build_llm_prompt(chunk_spec)
-        try:
-            chunk_result = generate_single_request(chunk_prompt)
-            chunks.append(chunk_result)
-        except Exception as e:
-            logger.warning(f"Failed to process chunk for path {path}: {str(e)}")
-            continue
-    
-    # Combine chunks
-    if chunks:
-        return "\n\n---\n\n".join(chunks)
-    else:
-        raise ValueError("Failed to generate any documentation chunks")
+_translation_cache: Dict[str, str] = {}
 
 
 def enhance_descriptions_batch(descriptions: List[Tuple[str, Dict[str, Any]]]) -> Dict[str, str]:
@@ -351,9 +205,64 @@ def enhance_description_with_llm(description: str, context: Dict[str, Any]) -> s
     return description
 
 
+def translate_to_russian(text: str) -> str:
+    """
+    Перевести произвольный текст на русский язык через LM Studio API.
+    Возвращает исходную строку при отсутствии конфигурации или ошибке.
+    """
+    if not text:
+        return ""
+
+    # Нет настроек — возвращаем оригинал
+    if not LM_STUDIO_API_URL or not HEADERS:
+        return text
+
+    if text in _translation_cache:
+        return _translation_cache[text]
+
+    url = f"{LM_STUDIO_API_URL}/chat/completions"
+    prompt = (
+        "Переведи текст на русский, сохраняя технические термины и идентификаторы. "
+        "Не добавляй ничего, только перевод.\n\n"
+        f"Текст: {text}"
+    )
+
+    payload = {
+        "model": MODEL_NAME,
+        "messages": [
+            {
+                "role": "system",
+                "content": "Ты профессиональный технический переводчик. Переводи кратко, без лишних пояснений."
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": min(MAX_TOKENS, 400),
+        "temperature": 0.2,
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=HEADERS, timeout=60)
+        response.raise_for_status()
+        result = response.json()
+        translated = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        if translated:
+            _translation_cache[text] = translated
+            return translated
+    except Exception as exc:  # noqa: B902
+        logger.debug(f"Translation failed, returning original: {exc}")
+
+    return text
+
+
 def clear_description_cache():
     """Clear the description enhancement cache."""
     global _description_cache
     _description_cache.clear()
     logger.debug("Description cache cleared")
 
+
+def clear_translation_cache():
+    """Clear translation cache."""
+    global _translation_cache
+    _translation_cache.clear()
+    logger.debug("Translation cache cleared")

@@ -10,48 +10,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.config import USE_LLM_ENHANCE
 from src.services.openapi_parser import (
-    group_operations_by_tag, count_endpoints, determine_authentication, 
-    build_parameter_rows, get_success_response_schema, describe_schema_fields, 
-    build_request_example, build_response_example, determine_interface_mode
+    group_operations_by_tag, count_endpoints, determine_authentication,
+    build_parameter_rows, get_success_response_schema, describe_schema_fields,
+    build_request_example, build_response_example, determine_interface_mode,
+    select_preferred_media, build_example_from_schema,
 )
-
-def limit_openapi_spec(openapi_spec: Dict[str, Any], max_endpoints: int) -> Dict[str, Any]:
-    """
-    Limit OpenAPI spec to max_endpoints endpoints.
-    
-    Args:
-        openapi_spec: Full OpenAPI specification
-        max_endpoints: Maximum number of endpoints to include
-        
-    Returns:
-        Limited OpenAPI specification
-    """
-    if max_endpoints is None or max_endpoints <= 0:
-        return openapi_spec
-    
-    grouped = group_operations_by_tag(openapi_spec)
-    limited_spec = {
-        "openapi": openapi_spec.get("openapi", "3.0.0"),
-        "info": openapi_spec.get("info", {}),
-        "paths": {},
-        "components": openapi_spec.get("components", {})
-    }
-    
-    endpoint_count = 0
-    for tag, operations in grouped.items():
-        if endpoint_count >= max_endpoints:
-            break
-        remaining = max_endpoints - endpoint_count
-        for endpoint in operations[:remaining]:
-            path = endpoint["path"]
-            method = endpoint["method"].lower()
-            if path not in limited_spec["paths"]:
-                limited_spec["paths"][path] = {}
-            limited_spec["paths"][path][method] = endpoint["operation"]
-            endpoint_count += 1
-    
-    logger.info(f"Limited OpenAPI spec to {endpoint_count} endpoints for LLM generation")
-    return limited_spec
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +97,8 @@ def generate_markdown_local(openapi_spec: Dict[str, Any], enhance_descriptions: 
                 for endpoint in operations:
                     operation = endpoint["operation"]
                     description = operation.get("description") or f"{endpoint['method']} запрос к {endpoint['path']}"
+                    if len(description or "") >= 160:
+                        continue
                     
                     # Enhance all descriptions when enhancement mode is enabled
                     # User explicitly enabled enhancement, so improve all descriptions
@@ -158,17 +123,21 @@ def generate_markdown_local(openapi_spec: Dict[str, Any], enhance_descriptions: 
             logger.warning(f"Batch enhancement failed, falling back to individual: {str(e)}")
             enhanced_descriptions = {}
 
+    overall_index = 1
+
     for tag, operations in grouped_operations.items():
         md_lines.append(f"## ИНТЕРФЕЙСЫ ВЗАИМОДЕЙСТВИЯ — {tag}")
         md_lines.append("")
         for index, endpoint in enumerate(operations, start=1):
             md_lines.extend(
                 render_endpoint_section(
-                    index=index,
+                    index=overall_index,
                     tag=tag,
                     path=endpoint["path"],
                     method=endpoint["method"],
                     operation=endpoint["operation"],
+                    path_parameters=endpoint.get("path_parameters") or [],
+                    path_item=endpoint.get("path_item") or {},
                     openapi_spec=openapi_spec,
                     enhance_descriptions=enhance_descriptions,
                     enhanced_descriptions=enhanced_descriptions,
@@ -176,6 +145,7 @@ def generate_markdown_local(openapi_spec: Dict[str, Any], enhance_descriptions: 
             )
             md_lines.append("---")
             md_lines.append("")
+            overall_index += 1
 
     return "\n".join(md_lines).strip()
 
@@ -185,6 +155,8 @@ def render_endpoint_section(
     path: str,
     method: str,
     operation: Dict[str, Any],
+    path_parameters: List[Dict[str, Any]],
+    path_item: Dict[str, Any],
     openapi_spec: Dict[str, Any],
     enhance_descriptions: bool = False,
     enhanced_descriptions: Optional[Dict[str, str]] = None,
@@ -201,7 +173,10 @@ def render_endpoint_section(
         or operation.get("operationId")
         or f"{method} {path}"
     )
+    summary = translate_text_if_needed(summary)
+
     original_description = operation.get("description") or f"{method} запрос к {path}"
+    original_description = translate_text_if_needed(original_description)
     description = original_description
     
     # Use pre-enhanced description from batch if available
@@ -252,13 +227,18 @@ def render_endpoint_section(
             logger.warning(f"Failed to enhance description for {method} {path}: {str(e)}")
             # Continue with original description
     auth_info = determine_authentication(operation, openapi_spec)
-    parameter_rows = build_parameter_rows(operation, openapi_spec)
+    parameter_rows = build_parameter_rows(operation, openapi_spec, path_parameters=path_parameters)
+    for row in parameter_rows:
+        row["description"] = translate_text_if_needed(row.get("description", ""))
+
     response_schema = get_success_response_schema(operation, openapi_spec)
     response_fields = describe_schema_fields(response_schema, openapi_spec)
+    for field in response_fields:
+        field["description"] = translate_text_if_needed(field.get("description", ""))
     request_example = build_request_example(operation, openapi_spec)
     response_example = build_response_example(operation, openapi_spec)
 
-    interface_mode = determine_interface_mode(operation, openapi_spec)
+    interface_mode = determine_interface_mode(operation, openapi_spec, path_item=path_item)
 
     summary_clean = sanitize_text(summary)
     heading_source = operation.get("description") or operation.get("summary") or summary
@@ -327,6 +307,7 @@ def render_endpoint_section(
             ]
         )
 
+    error_examples = build_error_examples(operation, openapi_spec)
     section.extend(
         [
             "",
@@ -337,20 +318,29 @@ def render_endpoint_section(
             format_json_block(response_example),
             "",
             f"### {index}.8 Примеры ошибок",
-            "```json",
-            '{ "error": "Invalid request", "code": 400 }',
-            "```",
-            "",
-            "```json",
-            '{ "error": "Unauthorized", "code": 401 }',
-            "```",
-            "",
-            "```json",
-            '{ "error": "Internal server error", "code": 500 }',
-            "```",
-            "",
         ]
     )
+    if error_examples:
+        for example in error_examples:
+            section.append(format_json_block(example))
+            section.append("")
+    else:
+        section.extend(
+            [
+                "```json",
+                '{ "error": "Invalid request", "code": 400 }',
+                "```",
+                "",
+                "```json",
+                '{ "error": "Unauthorized", "code": 401 }',
+                "```",
+                "",
+                "```json",
+                '{ "error": "Internal server error", "code": 500 }',
+                "```",
+                "",
+            ]
+        )
 
     return section
 
@@ -382,6 +372,41 @@ def format_json_block(payload: Any) -> str:
     """
     json_text = json.dumps(payload or {}, ensure_ascii=False, indent=2)
     return f"```json\n{json_text}\n```"
+
+
+def build_error_examples(operation: Dict[str, Any], openapi_spec: Dict[str, Any]) -> List[Any]:
+    """
+    Собрать примеры ошибок из 4xx/5xx ответов, если они есть в спецификации.
+    """
+    responses = operation.get("responses", {})
+    error_codes = [code for code in responses.keys() if str(code).startswith(("4", "5"))]
+    examples: List[Any] = []
+
+    for status in sorted(error_codes)[:3]:
+        response = responses.get(status, {})
+        content = response.get("content", {})
+        _, media = select_preferred_media(content)
+        if not media:
+            continue
+
+        media_examples = media.get("examples")
+        if media_examples:
+            example_value = next(iter(media_examples.values()))
+            if isinstance(example_value, dict):
+                examples.append(example_value.get("value", {}))
+            else:
+                examples.append(example_value)
+            continue
+
+        if "example" in media:
+            examples.append(media["example"])
+            continue
+
+        schema = media.get("schema")
+        if schema:
+            examples.append(build_example_from_schema(schema, openapi_spec))
+
+    return examples
 
 def sanitize_text(value: Optional[str]) -> str:
     """
@@ -650,3 +675,28 @@ def split_description_content(text: str) -> Tuple[str, str]:
         return text, ""
     return text[: match.start()].strip(), text[match.start():].strip()
 
+
+def contains_cyrillic(text: str) -> bool:
+    """Проверка наличия кириллицы, чтобы не переводить уже русские тексты."""
+    return bool(re.search(r"[а-яА-ЯёЁ]", text or ""))
+
+
+def translate_text_if_needed(text: Optional[str]) -> str:
+    """
+    Перевести английский текст на русский через LLM, если возможно.
+    Не трогаем русские/пустые строки, при ошибке возвращаем оригинал.
+    """
+    if not text or contains_cyrillic(text):
+        return text or ""
+
+    try:
+        from src.services.llm_service import translate_to_russian
+    except Exception:
+        return text
+
+    try:
+        translated = translate_to_russian(text)
+        return translated or text
+    except Exception as exc:  # noqa: B902
+        logger.debug(f"Translation skipped: {exc}")
+        return text

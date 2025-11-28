@@ -3,7 +3,7 @@ OpenAPI specification parser per OpenAPI 3.0 spec.
 Extracts and processes operations, parameters, schemas, and examples.
 """
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.config import HTTP_METHODS
 from src.utils.schema_resolver import resolve_schema, get_schema_type
@@ -27,7 +27,9 @@ def group_operations_by_tag(openapi_spec: Dict[str, Any]) -> Dict[str, List[Dict
         if not isinstance(path_item, dict):
             logger.warning(f"Skipping invalid path item for '{path}': expected object")
             continue
-        
+
+        path_parameters = path_item.get("parameters", [])
+
         for method, operation in path_item.items():
             if method.lower() not in HTTP_METHODS:
                 continue
@@ -39,7 +41,13 @@ def group_operations_by_tag(openapi_spec: Dict[str, Any]) -> Dict[str, List[Dict
             tags = operation.get("tags") or [default_tag]
             for tag in tags:
                 grouped.setdefault(tag, []).append(
-                    {"path": path, "method": method.upper(), "operation": operation}
+                    {
+                        "path": path,
+                        "method": method.upper(),
+                        "operation": operation,
+                        "path_item": path_item,
+                        "path_parameters": path_parameters,
+                    }
                 )
 
     return grouped
@@ -72,7 +80,7 @@ def determine_authentication(operation: Dict[str, Any], openapi_spec: Dict[str, 
         security = openapi_spec.get("security")
 
     if not security:
-        return "OAuth2PasswordBearer"
+        return "Нет аутентификации"
 
     scheme_name = next(iter(security[0].keys()), None)
     if not scheme_name:
@@ -82,7 +90,11 @@ def determine_authentication(operation: Dict[str, Any], openapi_spec: Dict[str, 
     scheme = security_schemes.get(scheme_name, {})
     return scheme.get("scheme") or scheme.get("type") or scheme_name
 
-def determine_interface_mode(operation: Dict[str, Any], openapi_spec: Dict[str, Any]) -> str:
+def determine_interface_mode(
+    operation: Dict[str, Any],
+    openapi_spec: Dict[str, Any],
+    path_item: Optional[Dict[str, Any]] = None,
+) -> str:
     """
     Определить режим интерфейса (синхронный/асинхронный) на основе расширений или описания.
     """
@@ -92,6 +104,8 @@ def determine_interface_mode(operation: Dict[str, Any], openapi_spec: Dict[str, 
         operation.get("x-interface-type"),
         operation.get("x-interface"),
         operation.get("x-mode"),
+        path_item.get("x-interface-mode") if path_item else None,
+        path_item.get("x_interface_mode") if path_item else None,
         openapi_spec.get("x-interface-mode"),
         openapi_spec.get("info", {}).get("x-interface-mode"),
     ]
@@ -112,7 +126,7 @@ def determine_interface_mode(operation: Dict[str, Any], openapi_spec: Dict[str, 
         )
     ).lower()
 
-    if any(keyword in text_blob for keyword in ("async", "асинхрон")):
+    if any(keyword in text_blob for keyword in ("async", "асинхрон", "asynchronous")):
         return "Асинхронный"
 
     return "Синхронный"
@@ -138,21 +152,45 @@ def normalize_interface_mode(value: Optional[Any]) -> Optional[str]:
 
     return raw.capitalize()
 
-def build_parameter_rows(operation: Dict[str, Any], openapi_spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+def build_parameter_rows(
+    operation: Dict[str, Any],
+    openapi_spec: Dict[str, Any],
+    path_parameters: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
     """
     Собрать сведения о параметрах пути, запроса, заголовков и тела.
     """
     rows: List[Dict[str, Any]] = []
 
-    for parameter in operation.get("parameters", []):
-        schema = resolve_schema(parameter.get("schema", {}), openapi_spec)
+    all_parameters: List[Dict[str, Any]] = []
+    if path_parameters:
+        all_parameters.extend(path_parameters)
+    all_parameters.extend(operation.get("parameters", []))
+
+    for parameter in deduplicate_parameters(all_parameters):
+        schema = extract_parameter_schema(parameter, openapi_spec)
+        description = parameter.get("description") or schema.get("description") or "Нет описания"
+        extras = []
+        if "default" in schema:
+            extras.append(f"По умолчанию: {schema['default']}")
+        if "enum" in schema:
+            extras.append(f"Допустимые значения: {', '.join(map(str, schema['enum']))}")
+        if parameter.get("style"):
+            extras.append(f"Стиль: {parameter['style']}")
+        if parameter.get("explode") is not None:
+            extras.append(f"explode: {parameter['explode']}")
+        if "example" in schema:
+            extras.append(f"Пример: {schema['example']}")
+        if extras:
+            description = f"{description}. " + "; ".join(extras)
+        required = parameter.get("required", False) or parameter.get("in") == "path"
         rows.append(
             {
                 "name": parameter.get("name", "-"),
                 "in": parameter.get("in", "-"),
                 "type": get_schema_type(schema),
-                "description": parameter.get("description", "Нет описания"),
-                "required": parameter.get("required", False),
+                "description": description,
+                "required": required,
             }
         )
 
@@ -160,25 +198,28 @@ def build_parameter_rows(operation: Dict[str, Any], openapi_spec: Dict[str, Any]
     if request_body:
         required = request_body.get("required", False)
         content = request_body.get("content", {})
-        for media_type, media in content.items():
-            schema = resolve_schema(media.get("schema", {}), openapi_spec)
-            rows.append(
-                {
-                    "name": "—",
-                    "in": "body",
-                    "type": get_schema_type(schema),
-                    "description": media.get("description", "Тело запроса"),
-                    "required": required,
-                }
+        media_type, media = select_preferred_media(content)
+        if media is None:
+            return rows
+
+        schema = resolve_schema(media.get("schema", {}), openapi_spec)
+        rows.append(
+            {
+                "name": "—",
+                "in": "body",
+                "type": get_schema_type(schema),
+                "description": media.get("description", "Тело запроса"),
+                "required": required,
+            }
+        )
+        rows.extend(
+            extract_schema_properties(
+                schema=schema,
+                openapi_spec=openapi_spec,
+                location="body",
+                parent_name="body",
             )
-            rows.extend(
-                extract_schema_properties(
-                    schema=schema,
-                    openapi_spec=openapi_spec,
-                    location="body",
-                    parent_name="body",
-                )
-            )
+        )
 
     return rows
 
@@ -198,12 +239,15 @@ def get_success_response_schema(operation: Dict[str, Any], openapi_spec: Dict[st
             if status_code.startswith("2"):
                 response = resp
                 break
+        if response is None:
+            response = responses.get("default")
 
     if not response:
         return None
 
     content = response.get("content", {})
-    for media in content.values():
+    _, media = select_preferred_media(content)
+    if media:
         schema = resolve_schema(media.get("schema", {}), openapi_spec)
         if schema:
             return schema
@@ -239,10 +283,26 @@ def describe_schema_fields(schema: Optional[Dict[str, Any]], openapi_spec: Dict[
 
     if schema_type == "array":
         item_schema = resolve_schema(resolved.get("items", {}), openapi_spec)
+        item_type = get_schema_type(item_schema)
+
+        # Раскрываем поля объекта внутри массива
+        if item_type == "object" and item_schema.get("properties"):
+            fields = []
+            for name, prop_schema in item_schema.get("properties", {}).items():
+                resolved_prop = resolve_schema(prop_schema, openapi_spec)
+                fields.append(
+                    {
+                        "name": f"items.{name}",
+                        "type": get_schema_type(resolved_prop),
+                        "description": resolved_prop.get("description", "Нет описания"),
+                    }
+                )
+            return fields
+
         return [
             {
                 "name": "items[]",
-                "type": f"array<{get_schema_type(item_schema)}>",
+                "type": f"array<{item_type}>",
                 "description": resolved.get("description", "Список элементов"),
             }
         ]
@@ -296,7 +356,8 @@ def build_request_example(operation: Dict[str, Any], openapi_spec: Dict[str, Any
     request_body = operation.get("requestBody")
     if request_body:
         content = request_body.get("content", {})
-        for media in content.values():
+        _, media = select_preferred_media(content)
+        if media:
             # Prefer 'examples' over deprecated 'example' (per OpenAPI spec)
             examples = media.get("examples")
             if examples:
@@ -304,12 +365,12 @@ def build_request_example(operation: Dict[str, Any], openapi_spec: Dict[str, Any
                 if isinstance(example_value, dict):
                     return example_value.get("value")
                 return example_value
-            
+
             # Fallback to deprecated 'example' field
             if "example" in media:
                 logger.debug("Using deprecated 'example' field. Consider using 'examples' instead.")
                 return media["example"]
-            
+
             # Generate from schema if no examples provided
             schema = resolve_schema(media.get("schema", {}), openapi_spec)
             if schema:
@@ -340,13 +401,14 @@ def build_response_example(operation: Dict[str, Any], openapi_spec: Dict[str, An
                 response = resp
                 break
         else:
-            response = next(iter(responses.values()), None)
+            response = responses.get("default") or next(iter(responses.values()), None)
 
     if not response:
         return {"errorCode": 0, "errorMessage": ""}
 
     content = response.get("content", {})
-    for media in content.values():
+    _, media = select_preferred_media(content)
+    if media:
         # Prefer 'examples' over deprecated 'example' (per OpenAPI spec)
         examples = media.get("examples")
         if examples:
@@ -354,12 +416,12 @@ def build_response_example(operation: Dict[str, Any], openapi_spec: Dict[str, An
             if isinstance(example_value, dict):
                 return example_value.get("value")
             return example_value
-        
+
         # Fallback to deprecated 'example' field
         if "example" in media:
             logger.debug("Using deprecated 'example' field. Consider using 'examples' instead.")
             return media["example"]
-        
+
         # Generate from schema if no examples provided
         schema = resolve_schema(media.get("schema", {}), openapi_spec)
         if schema:
@@ -395,6 +457,72 @@ def build_example_from_schema(schema: Optional[Dict[str, Any]], openapi_spec: Di
         "integer": 0,
         "number": 0,
         "boolean": True,
+        "uuid": "123e4567-e89b-12d3-a456-426614174000",
+        "date-time": "2024-01-01T00:00:00Z",
+        "date": "2024-01-01",
+        "email": "user@example.com",
     }
+
+    # Учитываем nullable
+    if resolved.get("nullable"):
+        return None
+
+    # Формат важнее базового типа
+    fmt = resolved.get("format")
+    if fmt and fmt in defaults:
+        return defaults[fmt]
+
     return defaults.get(schema_type, "value")
 
+
+def deduplicate_parameters(parameters: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Объединить параметры path-уровня и operation-уровня, оставляя приоритет operation.
+    """
+    seen: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for param in parameters:
+        name = param.get("name")
+        where = param.get("in")
+        if not name or not where:
+            continue
+        key = (name, where)
+        seen[key] = param
+    return list(seen.values())
+
+
+def extract_parameter_schema(parameter: Dict[str, Any], openapi_spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Получить схему параметра, учитывая вариант с content (OpenAPI 3).
+    """
+    if "schema" in parameter:
+        return resolve_schema(parameter.get("schema", {}), openapi_spec)
+
+    content = parameter.get("content")
+    if not content:
+        return {}
+
+    _, media = select_preferred_media(content)
+    if not media:
+        return {}
+    return resolve_schema(media.get("schema", {}), openapi_spec)
+
+
+def select_preferred_media(content: Dict[str, Any]) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """
+    Выбрать media type с приоритетом на JSON.
+    """
+    if not content:
+        return None, None
+
+    # Прямой приоритет application/json
+    if "application/json" in content:
+        return "application/json", content["application/json"]
+
+    # Приоритет на *+json
+    for media_type, media in content.items():
+        if media_type.endswith("+json"):
+            return media_type, media
+
+    # Иначе первый попавшийся
+    media_type, media = next(iter(content.items()))
+    return media_type, media

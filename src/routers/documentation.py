@@ -36,8 +36,8 @@ async def generate_documentation(
         media_type="application/json"
     ),
     use_llm_enhance: Optional[bool] = Query(
-        False,
-        description="Enhanced mode: true = use LLM to improve descriptions (fast, recommended), false = local parsing only (fastest). Default: false."
+        None,
+        description="Enhanced mode: true = use LLM to improve descriptions (fast, recommended), false = local parsing only (fastest). Default: env USE_LLM_ENHANCE."
     ),
     max_endpoints: Optional[int] = Query(
         None,
@@ -86,7 +86,7 @@ async def generate_documentation(
         # Determine generation mode: only two modes available
         # 1. Fast mode (use_llm_enhance=false): local parsing only
         # 2. Enhanced mode (use_llm_enhance=true): local parsing + LLM improves descriptions
-        enhance_mode = use_llm_enhance if use_llm_enhance is not None else False
+        enhance_mode = use_llm_enhance if use_llm_enhance is not None else USE_LLM_ENHANCE
         
         mode_desc = "enhanced (local + LLM)" if enhance_mode else "fast (local only)"
         logger.info(f"Generating documentation using {mode_desc} mode")
