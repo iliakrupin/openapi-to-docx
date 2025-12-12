@@ -156,9 +156,13 @@ def build_parameter_rows(
     operation: Dict[str, Any],
     openapi_spec: Dict[str, Any],
     path_parameters: Optional[List[Dict[str, Any]]] = None,
+    enhance_descriptions: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Собрать сведения о параметрах пути, запроса, заголовков и тела.
+    
+    Args:
+        enhance_descriptions: Если True, использовать LLM для генерации описаний для полей без описания
     """
     rows: List[Dict[str, Any]] = []
 
@@ -169,7 +173,24 @@ def build_parameter_rows(
 
     for parameter in deduplicate_parameters(all_parameters):
         schema = extract_parameter_schema(parameter, openapi_spec)
-        description = parameter.get("description") or schema.get("description") or "Нет описания"
+        description = parameter.get("description") or schema.get("description") or ""
+        
+        # Генерируем описание через LLM, если оно пустое и включен режим улучшения
+        if not description and enhance_descriptions:
+            field_name = parameter.get("name", "-")
+            field_type = get_schema_type(schema)
+            try:
+                from src.services.llm_service import generate_field_description
+                generated = generate_field_description(
+                    field_name=field_name,
+                    field_type=field_type,
+                    context={"location": parameter.get("in", "-")}
+                )
+                if generated:
+                    description = generated
+            except Exception as e:
+                logger.debug(f"Failed to generate description for parameter '{field_name}': {e}")
+        
         extras = []
         if "default" in schema:
             extras.append(f"По умолчанию: {schema['default']}")
@@ -218,6 +239,7 @@ def build_parameter_rows(
                 openapi_spec=openapi_spec,
                 location="body",
                 parent_name="body",
+                enhance_descriptions=enhance_descriptions,
             )
         )
 
@@ -254,9 +276,12 @@ def get_success_response_schema(operation: Dict[str, Any], openapi_spec: Dict[st
 
     return None
 
-def describe_schema_fields(schema: Optional[Dict[str, Any]], openapi_spec: Dict[str, Any]) -> List[Dict[str, str]]:
+def describe_schema_fields(schema: Optional[Dict[str, Any]], openapi_spec: Dict[str, Any], enhance_descriptions: bool = False) -> List[Dict[str, str]]:
     """
     Описать поля схемы ответа для таблицы.
+    
+    Args:
+        enhance_descriptions: Если True, использовать LLM для генерации описаний для полей без описания
     """
     if not schema:
         return []
@@ -271,12 +296,32 @@ def describe_schema_fields(schema: Optional[Dict[str, Any]], openapi_spec: Dict[
 
         fields = []
         for name, prop_schema in properties.items():
+            # Получаем description из исходной схемы или из resolved схемы
+            original_description = prop_schema.get("description") if isinstance(prop_schema, dict) else None
             resolved_prop = resolve_schema(prop_schema, openapi_spec)
+            resolved_description = resolved_prop.get("description") if isinstance(resolved_prop, dict) else None
+            description = original_description or resolved_description or ""
+            
+            # Генерируем описание через LLM, если оно пустое и включен режим улучшения
+            if not description and enhance_descriptions:
+                field_type = get_schema_type(resolved_prop)
+                try:
+                    from src.services.llm_service import generate_field_description
+                    generated = generate_field_description(
+                        field_name=name,
+                        field_type=field_type,
+                        context={"location": "response"}
+                    )
+                    if generated:
+                        description = generated
+                except Exception as e:
+                    logger.debug(f"Failed to generate description for response field '{name}': {e}")
+            
             fields.append(
                 {
                     "name": name,
                     "type": get_schema_type(resolved_prop),
-                    "description": resolved_prop.get("description", "Нет описания"),
+                    "description": description,
                 }
             )
         return fields
@@ -289,12 +334,32 @@ def describe_schema_fields(schema: Optional[Dict[str, Any]], openapi_spec: Dict[
         if item_type == "object" and item_schema.get("properties"):
             fields = []
             for name, prop_schema in item_schema.get("properties", {}).items():
+                # Получаем description из исходной схемы или из resolved схемы
+                original_description = prop_schema.get("description") if isinstance(prop_schema, dict) else None
                 resolved_prop = resolve_schema(prop_schema, openapi_spec)
+                resolved_description = resolved_prop.get("description") if isinstance(resolved_prop, dict) else None
+                description = original_description or resolved_description or ""
+                
+                # Генерируем описание через LLM, если оно пустое и включен режим улучшения
+                if not description and enhance_descriptions:
+                    field_type = get_schema_type(resolved_prop)
+                    try:
+                        from src.services.llm_service import generate_field_description
+                        generated = generate_field_description(
+                            field_name=name,
+                            field_type=field_type,
+                            context={"location": "response", "parent": "array item"}
+                        )
+                        if generated:
+                            description = generated
+                    except Exception as e:
+                        logger.debug(f"Failed to generate description for array item field '{name}': {e}")
+                
                 fields.append(
                     {
                         "name": f"items.{name}",
                         "type": get_schema_type(resolved_prop),
-                        "description": resolved_prop.get("description", "Нет описания"),
+                        "description": description,
                     }
                 )
             return fields
@@ -320,9 +385,13 @@ def extract_schema_properties(
     openapi_spec: Dict[str, Any],
     location: str,
     parent_name: str,
+    enhance_descriptions: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Получить список полей схемы (используется для описания requestBody).
+    
+    Args:
+        enhance_descriptions: Если True, использовать LLM для генерации описаний для полей без описания
     """
     resolved = resolve_schema(schema, openapi_spec)
     schema_type = get_schema_type(resolved)
@@ -335,13 +404,33 @@ def extract_schema_properties(
     rows: List[Dict[str, Any]] = []
 
     for name, prop_schema in properties.items():
+        # Получаем description из исходной схемы или из resolved схемы
+        original_description = prop_schema.get("description") if isinstance(prop_schema, dict) else None
         resolved_prop = resolve_schema(prop_schema, openapi_spec)
+        resolved_description = resolved_prop.get("description") if isinstance(resolved_prop, dict) else None
+        description = original_description or resolved_description or "Нет описания"
+        
+        # Генерируем описание через LLM, если оно "Нет описания" или пустое и включен режим улучшения
+        if (description == "Нет описания" or not description) and enhance_descriptions:
+            field_type = get_schema_type(resolved_prop)
+            try:
+                from src.services.llm_service import generate_field_description
+                generated = generate_field_description(
+                    field_name=name,
+                    field_type=field_type,
+                    context={"location": location, "parent": parent_name}
+                )
+                if generated:
+                    description = generated
+            except Exception as e:
+                logger.debug(f"Failed to generate description for field '{name}': {e}")
+        
         rows.append(
             {
                 "name": f"{parent_name}.{name}",
                 "in": location,
                 "type": get_schema_type(resolved_prop),
-                "description": resolved_prop.get("description", "Нет описания"),
+                "description": description,
                 "required": name in required_fields,
             }
         )
@@ -429,50 +518,147 @@ def build_response_example(operation: Dict[str, Any], openapi_spec: Dict[str, An
 
     return {"errorCode": 0, "errorMessage": ""}
 
-def build_example_from_schema(schema: Optional[Dict[str, Any]], openapi_spec: Dict[str, Any]) -> Any:
+def build_example_from_schema(
+    schema: Optional[Dict[str, Any]], 
+    openapi_spec: Dict[str, Any],
+    visited: Optional[set] = None,
+    depth: int = 0
+) -> Any:
     """
     Построить пример значения на основе схемы.
     """
-    resolved = resolve_schema(schema or {}, openapi_spec)
-    if "example" in resolved:
-        return resolved["example"]
+    if visited is None:
+        visited = set()
+    
+    # Ограничение глубины рекурсии для защиты от бесконечных циклов
+    MAX_DEPTH = 20
+    if depth > MAX_DEPTH:
+        logger.warning(f"Maximum recursion depth ({MAX_DEPTH}) exceeded in schema example generation. Returning empty object/array.")
+        return {}
+    
+    original_schema = schema or {}
+    original_ref = original_schema.get("$ref")
+    
+    # КРИТИЧНО: Проверяем цикл ДО разрешения, используя $ref из исходной схемы
+    # Это работает, потому что $ref стабилен и не меняется при разрешении
+    if original_ref:
+        if original_ref in visited:
+            logger.warning(f"Circular reference detected for '{original_ref}' in schema example generation. Returning empty object/array.")
+            resolved = resolve_schema(original_schema, openapi_spec)
+            schema_type = get_schema_type(resolved) if isinstance(resolved, dict) else "unknown"
+            if schema_type == "array":
+                return []
+            return {}
+        schema_key = original_ref
+        visited.add(schema_key)
+        resolved = resolve_schema(original_schema, openapi_spec)
+    else:
+        # Для схем без $ref разрешаем сначала
+        resolved = resolve_schema(original_schema, openapi_spec)
+        # Пытаемся найти $ref в resolved схеме (может быть, если это была вложенная ссылка)
+        resolved_ref = resolved.get("$ref") if isinstance(resolved, dict) else None
+        if resolved_ref:
+            if resolved_ref in visited:
+                logger.warning(f"Circular reference detected for '{resolved_ref}' in schema example generation. Returning empty object/array.")
+                schema_type = get_schema_type(resolved) if isinstance(resolved, dict) else "unknown"
+                if schema_type == "array":
+                    return []
+                return {}
+            schema_key = resolved_ref
+            visited.add(schema_key)
+        else:
+            # Нет $ref ни в исходной, ни в resolved схеме
+            # Для таких схем полагаемся только на ограничение глубины (MAX_DEPTH)
+            # Не добавляем в visited, чтобы не блокировать легитимные вложенные структуры
+            schema_key = None
+    
+    try:
+        if "example" in resolved:
+            return resolved["example"]
+        
+        schema_type = get_schema_type(resolved)
 
-    schema_type = get_schema_type(resolved)
+        if schema_type == "object":
+            example = {}
+            for name, prop_schema in resolved.get("properties", {}).items():
+                # Проверяем цикл по $ref из исходной схемы свойства
+                prop_ref = prop_schema.get("$ref") if isinstance(prop_schema, dict) else None
+                if prop_ref and prop_ref in visited:
+                    logger.warning(f"Skipping property '{name}' due to circular reference '{prop_ref}'")
+                    continue
+                # Также проверяем resolved схему свойства на наличие $ref
+                if isinstance(prop_schema, dict):
+                    prop_resolved = resolve_schema(prop_schema, openapi_spec)
+                    prop_resolved_ref = prop_resolved.get("$ref") if isinstance(prop_resolved, dict) else None
+                    if prop_resolved_ref and prop_resolved_ref in visited:
+                        logger.warning(f"Skipping property '{name}' due to circular reference in resolved schema '{prop_resolved_ref}'")
+                        continue
+                example[name] = build_example_from_schema(prop_schema, openapi_spec, visited, depth + 1)
+            return example or {}
 
-    if schema_type == "object":
-        example = {}
-        for name, prop_schema in resolved.get("properties", {}).items():
-            example[name] = build_example_from_schema(prop_schema, openapi_spec)
-        return example or {}
+        if schema_type == "array":
+            item_schema = resolved.get("items", {})
+            # Проверяем цикл по $ref из исходной схемы элемента
+            item_ref = item_schema.get("$ref") if isinstance(item_schema, dict) else None
+            if item_ref and item_ref in visited:
+                logger.warning(f"Skipping array item due to circular reference '{item_ref}'")
+                return []
+            # Также проверяем resolved схему элемента на наличие $ref
+            if isinstance(item_schema, dict):
+                item_resolved = resolve_schema(item_schema, openapi_spec)
+                item_resolved_ref = item_resolved.get("$ref") if isinstance(item_resolved, dict) else None
+                if item_resolved_ref and item_resolved_ref in visited:
+                    logger.warning(f"Skipping array item due to circular reference in resolved schema '{item_resolved_ref}'")
+                    return []
+            
+            # Генерируем пример элемента массива
+            item_example = build_example_from_schema(item_schema, openapi_spec, visited, depth + 1)
+            
+            # Если элемент массива - это пустой объект {}, это обычно означает,
+            # что тип не был определен правильно. Для массивов в контексте ошибок
+            # (например, loc в FastAPI validation errors) это должны быть строки.
+            if isinstance(item_example, dict) and not item_example:
+                # Проверяем тип элемента в схеме
+                resolved_item = resolve_schema(item_schema, openapi_spec) if isinstance(item_schema, dict) else {}
+                item_type = resolved_item.get("type") if isinstance(resolved_item, dict) else None
+                
+                # Если тип явно указан как string, или не указан вообще (пустой объект),
+                # возвращаем строку (типично для loc в ошибках валидации)
+                if item_type == "string" or item_type is None:
+                    return ["string"]
+                # Для других типов возвращаем значение по умолчанию
+                return [item_example if item_example else "value"]
+            
+            return [item_example]
 
-    if schema_type == "array":
-        item_schema = resolved.get("items", {})
-        return [build_example_from_schema(item_schema, openapi_spec)]
+        if "enum" in resolved:
+            return resolved["enum"][0]
 
-    if "enum" in resolved:
-        return resolved["enum"][0]
+        defaults = {
+            "string": "string",
+            "integer": 0,
+            "number": 0,
+            "boolean": True,
+            "uuid": "123e4567-e89b-12d3-a456-426614174000",
+            "date-time": "2024-01-01T00:00:00Z",
+            "date": "2024-01-01",
+            "email": "user@example.com",
+        }
 
-    defaults = {
-        "string": "string",
-        "integer": 0,
-        "number": 0,
-        "boolean": True,
-        "uuid": "123e4567-e89b-12d3-a456-426614174000",
-        "date-time": "2024-01-01T00:00:00Z",
-        "date": "2024-01-01",
-        "email": "user@example.com",
-    }
+        # Учитываем nullable
+        if resolved.get("nullable"):
+            return None
 
-    # Учитываем nullable
-    if resolved.get("nullable"):
-        return None
+        # Формат важнее базового типа
+        fmt = resolved.get("format")
+        if fmt and fmt in defaults:
+            return defaults[fmt]
 
-    # Формат важнее базового типа
-    fmt = resolved.get("format")
-    if fmt and fmt in defaults:
-        return defaults[fmt]
-
-    return defaults.get(schema_type, "value")
+        return defaults.get(schema_type, "value")
+    finally:
+        # Удаляем из visited только если schema_key был установлен
+        if schema_key is not None:
+            visited.discard(schema_key)
 
 
 def deduplicate_parameters(parameters: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

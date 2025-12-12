@@ -227,14 +227,22 @@ def render_endpoint_section(
             logger.warning(f"Failed to enhance description for {method} {path}: {str(e)}")
             # Continue with original description
     auth_info = determine_authentication(operation, openapi_spec)
-    parameter_rows = build_parameter_rows(operation, openapi_spec, path_parameters=path_parameters)
+    parameter_rows = build_parameter_rows(operation, openapi_spec, path_parameters=path_parameters, enhance_descriptions=enhance_descriptions)
     for row in parameter_rows:
-        row["description"] = translate_text_if_needed(row.get("description", ""))
+        # Переводим только если описание не было сгенерировано через LLM (LLM уже возвращает русский текст)
+        # и описание не пустое и не "Нет описания"
+        desc = row.get("description", "")
+        if desc and desc != "Нет описания" and desc.strip():
+            row["description"] = translate_text_if_needed(desc)
 
     response_schema = get_success_response_schema(operation, openapi_spec)
-    response_fields = describe_schema_fields(response_schema, openapi_spec)
+    response_fields = describe_schema_fields(response_schema, openapi_spec, enhance_descriptions=enhance_descriptions)
     for field in response_fields:
-        field["description"] = translate_text_if_needed(field.get("description", ""))
+        # Переводим только если описание не было сгенерировано через LLM (LLM уже возвращает русский текст)
+        # и описание не пустое
+        desc = field.get("description", "")
+        if desc and desc.strip():
+            field["description"] = translate_text_if_needed(desc)
     request_example = build_request_example(operation, openapi_spec)
     response_example = build_response_example(operation, openapi_spec)
 

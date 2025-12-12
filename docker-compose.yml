@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  api-doc-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: api-doc-generator
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./temp:/app/temp
+    restart: unless-stopped
+

@@ -3,11 +3,32 @@ Configuration management per FastAPI best practices.
 Loads environment variables and provides application configuration.
 """
 import os
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
+logger = logging.getLogger(__name__)
+
 # Load environment variables
-load_dotenv()
+# Try to find .env file in multiple locations
+env_paths = [
+    Path(__file__).parent.parent / ".env",  # Project root (from src/config.py)
+    Path.cwd() / ".env",  # Current working directory
+    Path.home() / ".env",  # Home directory (fallback)
+]
+
+env_loaded = False
+for env_path in env_paths:
+    if env_path.exists():
+        logger.info(f"Loading .env from: {env_path}")
+        load_dotenv(dotenv_path=env_path, override=True)
+        env_loaded = True
+        break
+
+if not env_loaded:
+    # Fallback to default behavior (searches in current directory and parents)
+    logger.info("No .env file found in standard locations, using default load_dotenv() behavior")
+    load_dotenv()
 
 # LM Studio API configuration
 LM_STUDIO_API_URL = os.getenv("LM_STUDIO_API_URL")
@@ -15,6 +36,14 @@ API_TOKEN = os.getenv("LM_STUDIO_API_TOKEN") or os.getenv("API_TOKEN")
 MODEL_NAME = os.getenv("LM_STUDIO_MODEL_NAME", "Qwen/Qwen3-30B-A3B-FP8")
 MAX_TOKENS = int(os.getenv("LM_STUDIO_MAX_TOKENS", "28000"))  # buffer for prompt+response
 CHUNK_SIZE = int(os.getenv("LM_STUDIO_CHUNK_SIZE", "10000"))  # max size per chunk
+
+# Log configuration status (without sensitive data)
+if LM_STUDIO_API_URL:
+    logger.info(f"LM_STUDIO_API_URL configured: {LM_STUDIO_API_URL}")
+    logger.info(f"API_TOKEN configured: {'Yes' if API_TOKEN else 'No'}")
+    logger.info(f"MODEL_NAME: {MODEL_NAME}")
+else:
+    logger.warning("LM_STUDIO_API_URL not configured - LLM features will be disabled")
 
 # Mode selection: auto-enable LLM if both URL and token are provided
 # Can be explicitly overridden with USE_LLM environment variable
