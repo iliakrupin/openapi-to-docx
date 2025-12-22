@@ -10,25 +10,32 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 # Load environment variables
-# Try to find .env file in multiple locations
-env_paths = [
-    Path(__file__).parent.parent / ".env",  # Project root (from src/config.py)
-    Path.cwd() / ".env",  # Current working directory
-    Path.home() / ".env",  # Home directory (fallback)
-]
+# First check if variables are already set (e.g., from docker-compose env_file)
+# Only load from .env file if variables are not already set
+env_vars_already_set = bool(os.getenv("LM_STUDIO_API_URL") or os.getenv("API_TOKEN"))
 
-env_loaded = False
-for env_path in env_paths:
-    if env_path.exists():
-        logger.info(f"Loading .env from: {env_path}")
-        load_dotenv(dotenv_path=env_path, override=True)
-        env_loaded = True
-        break
+if not env_vars_already_set:
+    # Try to find .env file in multiple locations
+    env_paths = [
+        Path(__file__).parent.parent / ".env",  # Project root (from src/config.py)
+        Path.cwd() / ".env",  # Current working directory
+        Path.home() / ".env",  # Home directory (fallback)
+    ]
 
-if not env_loaded:
-    # Fallback to default behavior (searches in current directory and parents)
-    logger.info("No .env file found in standard locations, using default load_dotenv() behavior")
-    load_dotenv()
+    env_loaded = False
+    for env_path in env_paths:
+        if env_path.exists():
+            logger.info(f"Loading .env from: {env_path}")
+            load_dotenv(dotenv_path=env_path, override=True)
+            env_loaded = True
+            break
+
+    if not env_loaded:
+        # Fallback to default behavior (searches in current directory and parents)
+        logger.info("No .env file found in standard locations, using default load_dotenv() behavior")
+        load_dotenv()
+else:
+    logger.info("Environment variables already set (likely from docker-compose or system environment), skipping .env file load")
 
 # LM Studio API configuration
 LM_STUDIO_API_URL = os.getenv("LM_STUDIO_API_URL")
